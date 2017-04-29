@@ -8,6 +8,7 @@ using Eigen::MatrixXd;
 using Eigen::VectorXd;
 using std::vector;
 
+#define EPS 0.0001 // A very small number
 /*
  * Constructor.
  */
@@ -92,9 +93,9 @@ void FusionEKF::ProcessMeasurement(const MeasurementPackage &measurement_pack) {
       /**
       Convert radar from polar to cartesian coordinates and initialize state.
       */
-        const double rho = measurement_pack.raw_measurements_(0,0);
-        const double phi = measurement_pack.raw_measurements_(1,0);
-        const double rho_dot = measurement_pack.raw_measurements_(2,0);
+        float rho = measurement_pack.raw_measurements_(0); // range
+        float phi = measurement_pack.raw_measurements_(1); // bearing
+        float rho_dot = measurement_pack.raw_measurements_(2); // velocity
         float x = rho * cos(phi);
         float y = rho * sin(phi);
         float vx = rho_dot * cos(phi);
@@ -108,6 +109,24 @@ void FusionEKF::ProcessMeasurement(const MeasurementPackage &measurement_pack) {
       */
     ekf_.x_ << measurement_pack.raw_measurements_(0,0), measurement_pack.raw_measurements_(1,0), 0.0, 0.0;
     }
+
+    // Deal with the special case initialisation problems
+    if (fabs(ekf_.x_(0)) < EPS and fabs(ekf_.x_(1)) < EPS){
+        ekf_.x_(0) = EPS;
+        ekf_.x_(1) = EPS;
+    }
+
+    // Initial covariance matrix
+    ekf_.P_ = MatrixXd(4, 4);
+    ekf_.P_ << 1, 0, 0, 0,
+               0, 1, 0, 0,
+               0, 0, 1000, 0,
+               0, 0, 0, 1000;
+    // Print the initialization results
+    cout << "EKF init: " << ekf_.x_ << endl;
+
+    // Save the initiall timestamp for dt calculation
+    previous_timestamp_ = measurement_pack.timestamp_;
 
     // done initializing, no need to predict or update
     is_initialized_ = true;
@@ -141,27 +160,14 @@ void FusionEKF::ProcessMeasurement(const MeasurementPackage &measurement_pack) {
   float dt_3 = dt_2 * dt;
   float dt_4 = dt_3 * dt;
 
-
   //set the process covariance matrix Q
-  //ekf_.Q_ = MatrixXd(4, 4);
-  //ekf_.Q_ <<  dt_4/4*noise_ax, 0, dt_3/2*noise_ax, 0,
-  //         0, dt_4/4*noise_ay, 0, dt_3/2*noise_ay,
-  //         dt_3/2*noise_ax, 0, dt_2*noise_ax, 0,
-  //         0, dt_3/2*noise_ay, 0, dt_2*noise_ay;
+  ekf_.Q_ = MatrixXd(4, 4);
+  ekf_.Q_ <<  dt_4/4*noise_ax, 0, dt_3/2*noise_ax, 0,
+           0, dt_4/4*noise_ay, 0, dt_3/2*noise_ay,
+           dt_3/2*noise_ax, 0, dt_2*noise_ax, 0,
+           0, dt_3/2*noise_ay, 0, dt_2*noise_ay;
 
-  MatrixXd G = MatrixXd(4,2);
-  G << dt_square_by_2, 0,
-       0, dt_square_by_2,
-       dt, 0,
-       0, dt ;
-
-  MatrixXd Qv = MatrixXd(2,2);
-  Qv << noise_ax, 0,
-       0, noise_ay;
-
-
-  ekf_.Q_ = G * Qv * G.transpose();
-  ekf_.Predict();
+   ekf_.Predict();
 
   /*****************************************************************************
    *  Update
